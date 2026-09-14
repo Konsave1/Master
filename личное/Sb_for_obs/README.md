@@ -15,7 +15,7 @@
 ## Установка
 
 1. Скачайте репозиторий или клонируйте его.
-2. Откройте корневую папку репозитория как vault в Obsidian.
+2. Откройте папку `личное/Sb_for_obs` как vault в Obsidian.
 3. В настройках Obsidian разрешите community plugins, если приложение попросит это сделать.
 4. Убедитесь, что включён плагин **Second Brain Core**.
 5. Откройте команду **Second Brain: Open dashboard** или файл `00 System/Second Brain.md`.
