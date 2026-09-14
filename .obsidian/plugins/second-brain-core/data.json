@@ -1,0 +1,10 @@
+{
+  "taskFolder": "10 University/Задания",
+  "contentRoots": [
+    "10 University"
+  ],
+  "semesterStart": "2026-08-31",
+  "defaultView": "calendar",
+  "openOnStartup": true,
+  "lastSelectedQuantum": ""
+}

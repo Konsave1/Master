@@ -1,2 +1,31 @@
-# Master
-This repository contains academic projects focused on procedural C/C++ and low-level systems. It includes laboratory works (sem1_lab1, lb3) featuring manual memory management, linked lists, and matrix logic like the Frobenius Norm. Managed via Git, the code emphasizes standard libraries, library separation, and robust noexcept logic.
+# Second Brain for Obsidian
+
+Готовое Obsidian-хранилище для учёбы: недельный календарь, задачи и дедлайны, прогресс проектов и постоянный интерактивный граф знаний.
+
+## Возможности
+
+- адаптивный недельный календарь с раскрытием месяца по двойному нажатию;
+- расписание по числителю и знаменателю;
+- задачи на день и сгруппированные повторяющиеся дедлайны;
+- недельная цель и прогресс проекта;
+- постоянный граф знаний с плавной раскладкой и переходами к квантам;
+- закрепление выбора двойным нажатием и снятие правой кнопкой мыши;
+- адаптивная компоновка для больших мониторов и компактных экранов.
+
+## Установка
+
+1. Скачайте репозиторий или клонируйте его.
+2. Откройте корневую папку репозитория как vault в Obsidian.
+3. В настройках Obsidian разрешите community plugins, если приложение попросит это сделать.
+4. Убедитесь, что включён плагин **Second Brain Core**.
+5. Откройте команду **Second Brain: Open dashboard** или файл `00 System/Second Brain.md`.
+
+Плагин поставляется прямо в `.obsidian/plugins/second-brain-core` и не требует сборки или установки npm-зависимостей.
+
+## Формат данных
+
+Все данные остаются обычными Markdown-файлами с YAML-свойствами и wiki-ссылками. Их можно редактировать вручную, переносить между vault и индексировать стандартными средствами Obsidian.
+
+## Версия
+
+`Second Brain Core 1.0.1`
