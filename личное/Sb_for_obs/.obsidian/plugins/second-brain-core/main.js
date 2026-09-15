@@ -602,6 +602,61 @@ class DeadlineVisibilityModal extends Modal {
   }
 }
 
+class AddItemModal extends Modal {
+  constructor(app, plugin, initialQuantum = "") {
+    super(app);
+    this.plugin = plugin;
+    this.initialQuantum = initialQuantum;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.addClass("sb-create-menu-modal");
+    const head = contentEl.createDiv({ cls: "sb-create-menu-head" });
+    head.createEl("h2", { text: "Что добавить?" });
+    head.createEl("p", { text: "Выбери тип — дальше откроется короткая понятная форма." });
+    const grid = contentEl.createDiv({ cls: "sb-create-choice-grid" });
+
+    const addChoice = (iconName, title, description, meta, action, primary = false) => {
+      const button = grid.createEl("button", { cls: `sb-create-choice ${primary ? "is-primary" : ""}` });
+      const icon = button.createSpan({ cls: "sb-create-choice-icon" });
+      setIcon(icon, iconName);
+      const copy = button.createSpan({ cls: "sb-create-choice-copy" });
+      copy.createSpan({ cls: "sb-create-choice-title", text: title });
+      copy.createSpan({ cls: "sb-create-choice-description", text: description });
+      copy.createSpan({ cls: "sb-create-choice-meta", text: meta });
+      const arrow = button.createSpan({ cls: "sb-create-choice-arrow" });
+      setIcon(arrow, "arrow-right");
+      button.addEventListener("click", () => {
+        this.close();
+        window.setTimeout(action, 0);
+      });
+    };
+
+    addChoice(
+      "circle-check-big",
+      "Задачу",
+      "Обычное дело с одной датой и прогрессом.",
+      "Название · дата · тема",
+      () => new NewTaskModal(this.app, this.plugin, this.initialQuantum).open(),
+    );
+    addChoice(
+      "flag",
+      "Дедлайн",
+      "Один или несколько сроков в общей карточке.",
+      "Этапы · пара или событие · скрыть до даты",
+      () => new NewDeadlineModal(this.app, this.plugin, this.initialQuantum).open(),
+      true,
+    );
+
+    contentEl.createDiv({ cls: "sb-create-menu-hint", text: "Esc — закрыть без добавления" });
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
 class SecondBrainView extends ItemView {
   constructor(leaf, plugin) {
     super(leaf);
@@ -742,12 +797,11 @@ class SecondBrainView extends ItemView {
     const managementButton = navigation.createEl("button", { cls: `sb-nav-button ${this.activePage === "management" ? "is-active" : ""}`, text: "Управление" });
     setIcon(managementButton.createSpan(), "list-checks");
     managementButton.addEventListener("click", () => { this.activePage = "management"; this.render(); });
-    const addButton = navigation.createEl("button", { cls: "sb-action-button", text: "Задача" });
+    const addButton = navigation.createEl("button", { cls: "sb-action-button mod-cta sb-main-add-button", text: "Добавить" });
     setIcon(addButton.createSpan(), "plus");
-    addButton.addEventListener("click", () => new NewTaskModal(this.app, this.plugin, this.selectedQuantum).open());
-    const deadlineButton = navigation.createEl("button", { cls: "sb-action-button mod-cta", text: "Дедлайн" });
-    setIcon(deadlineButton.createSpan(), "flag");
-    deadlineButton.addEventListener("click", () => new NewDeadlineModal(this.app, this.plugin, this.selectedQuantum).open());
+    const addChevron = addButton.createSpan({ cls: "sb-add-chevron" });
+    setIcon(addChevron, "chevron-down");
+    addButton.addEventListener("click", () => new AddItemModal(this.app, this.plugin, this.selectedQuantum).open());
   }
 
   renderPage() {
@@ -1102,8 +1156,8 @@ class SecondBrainView extends ItemView {
     summaryCopy.createDiv({ cls: "sb-progress-title", text: "Процесс выполнения" });
     const deadlineSeries = new Set([...manualDeadlineSources.map((record) => record.id), ...recurringProjects.map((record) => record.id)]);
     summaryCopy.createDiv({ cls: "sb-progress-meta", text: `${trackedTasks.length} заданий · ${deadlineSeries.size} серий дедлайнов` });
-    const addDeadline = summary.createEl("button", { cls: "sb-icon-button sb-add-deadline", attr: { "aria-label": "Добавить дедлайн", title: "Добавить дедлайн" } });
-    setIcon(addDeadline, "plus");
+    const addDeadline = summary.createEl("button", { cls: "sb-small-button sb-add-deadline", text: "Добавить дедлайн", attr: { title: "Добавить дедлайн" } });
+    setIcon(addDeadline.createSpan(), "plus");
     addDeadline.addEventListener("click", () => new NewDeadlineModal(this.app, this.plugin, this.selectedQuantum).open());
     const list = this.deadlineBodyEl.createDiv({ cls: "sb-deadline-list" });
     if (!tasks.length) list.createDiv({ cls: "sb-empty", text: "Пока нет видимых заданий и дедлайнов" });
