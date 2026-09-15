@@ -54,7 +54,9 @@
 
 .sb-toolbar-nav {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
+  justify-content: flex-end;
   gap: 8px;
 }
 
@@ -662,11 +664,15 @@
 
 .sb-progress-summary {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 9px;
   padding-bottom: 9px;
   border-bottom: 1px solid var(--sb-line-soft);
+}
+
+.sb-add-deadline {
+  align-self: center;
 }
 
 .sb-progress-ring {
@@ -794,6 +800,8 @@
 
 .sb-deadline-group-actions {
   display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
   justify-content: flex-end;
   margin-top: 8px;
 }
@@ -1220,6 +1228,70 @@
 
 .sb-task-modal h2 {
   margin-top: 0;
+}
+
+.sb-modal-intro {
+  margin: -4px 0 16px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.sb-modal-subtitle {
+  margin: 18px 0 10px;
+  font-size: 15px;
+}
+
+.sb-deadline-modal {
+  width: min(760px, 90vw);
+}
+
+.sb-deadline-stage-list {
+  display: grid;
+  gap: 10px;
+}
+
+.sb-deadline-stage-editor {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+  background: var(--background-secondary);
+}
+
+.sb-deadline-stage-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.sb-deadline-stage-head .sb-icon-button {
+  width: 30px;
+  height: 30px;
+}
+
+.sb-modal-input,
+.sb-deadline-anchor-select {
+  width: 100%;
+  min-width: 0;
+}
+
+.sb-deadline-stage-fields {
+  display: grid;
+  grid-template-columns: minmax(145px, .35fr) minmax(260px, 1fr);
+  gap: 8px;
+}
+
+.sb-add-stage {
+  margin-top: 10px;
+}
+
+@media (max-width: 700px) {
+  .sb-deadline-stage-fields {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* Размеры определяются по доступной области Obsidian, а не по физическим дюймам монитора. */

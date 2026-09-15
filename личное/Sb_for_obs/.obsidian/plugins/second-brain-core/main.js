@@ -34,6 +34,10 @@ function safeNumber(input, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function yamlQuote(input) {
+  return JSON.stringify(String(input ?? ""));
+}
+
 function dateKey(input) {
   const text = asString(input);
   const match = text.match(/^\d{4}-\d{2}-\d{2}/);
@@ -49,6 +53,24 @@ function formatDate(input) {
 
 function localDateKey(date = new Date()) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function asDeadlineStages(input) {
+  const items = Array.isArray(input) ? input : [];
+  return items.map((item, index) => {
+    if (typeof item === "string") {
+      return { title: "", due: dateKey(item), time: "", anchor: "", showFrom: "", index };
+    }
+    if (!item || typeof item !== "object") return null;
+    return {
+      title: asString(item.title || item.name || ""),
+      due: dateKey(item.date || item.due || ""),
+      time: asString(item.time || ""),
+      anchor: asString(item.anchor || item["anchor-id"] || item.event || item.class || ""),
+      showFrom: dateKey(item["show-from"] || item.showFrom || item["hidden-until"] || ""),
+      index,
+    };
+  }).filter((item) => item && (item.due || item.anchor));
 }
 
 function slugify(input) {
@@ -75,6 +97,7 @@ class BrainIndex {
     this.records = [];
     this.byId = new Map();
     this.tasks = [];
+    this.deadlines = [];
     this.events = [];
     this.classes = [];
     this.nodes = [];
@@ -115,6 +138,9 @@ class BrainIndex {
         deadlineQuantum: asString(value(fm, "deadline-quant", "")),
         deadlinePath: asString(value(fm, "deadline-path", "")),
         deadlineTime: asString(value(fm, "deadline-time", "")),
+        deadlineAnchor: asString(value(fm, "deadline-anchor", "")),
+        deadlineStages: asDeadlineStages(value(fm, "deadlines", [])),
+        showFrom: dateKey(value(fm, "show-from", value(fm, "hidden-until", ""))),
         graph: value(fm, "graph", true) !== false,
         summary: asString(value(fm, "summary", "")),
         teacher: asString(value(fm, "teacher", "")),
@@ -132,9 +158,10 @@ class BrainIndex {
     this.records = records;
     this.byId = new Map(records.filter((record) => record.id).map((record) => [record.id, record]));
     this.tasks = records.filter((record) => record.type === "task").sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"));
+    this.deadlines = records.filter((record) => record.type === "deadline").sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"));
     this.events = records.filter((record) => record.type === "event").sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
     this.classes = records.filter((record) => record.type === "class").sort((a, b) => `${a.weekday}${a.time}`.localeCompare(`${b.weekday}${b.time}`));
-    this.nodes = records.filter((record) => record.id && record.graph && !["event", "class"].includes(record.type));
+    this.nodes = records.filter((record) => record.id && record.graph && !["event", "class", "deadline"].includes(record.type));
     this.children = new Map();
     for (const node of this.nodes) {
       if (!node.parent) continue;
@@ -198,6 +225,10 @@ class BrainIndex {
     });
   }
 
+  isVisible(record, today = localDateKey(new Date())) {
+    return !record?.showFrom || record.showFrom <= today;
+  }
+
   weekInfo(date) {
     const semesterStart = new Date(`${this.settings.semesterStart || "2026-08-31"}T12:00:00`);
     const current = new Date(date.getFullYear(), date.getMonth(), date.getDate(), 12);
@@ -219,7 +250,7 @@ class BrainIndex {
     });
   }
 
-  deadlinesForDate(date) {
+  recurringDeadlinesForDate(date) {
     const key = localDateKey(date);
     return this.classesForDate(date)
       .filter((record) => record.deadlineTitle)
@@ -243,8 +274,55 @@ class BrainIndex {
           nextAction: project?.nextAction || "Дополнить описание проекта",
           sourceClassId: record.id,
           sourceClassTitle: record.title,
+          sourceAnchorId: record.id,
+          sourceAnchorTitle: record.title,
+          originId: project?.id || record.id,
+          deadlineGroupId: projectId || record.id,
+          showFrom: project?.showFrom || record.showFrom || "",
         };
-      });
+      })
+      .filter((record) => this.isVisible(record));
+  }
+
+  deadlineOccurrences(record) {
+    const stages = record.deadlineStages.length
+      ? record.deadlineStages
+      : [{ title: "", due: record.due, time: record.time, anchor: record.deadlineAnchor, showFrom: "", index: 0 }];
+    return stages.map((stage, index) => {
+      const anchorId = stage.anchor || record.deadlineAnchor;
+      const anchor = this.byId.get(anchorId);
+      const due = stage.due || record.due || anchor?.date || "";
+      const showFrom = stage.showFrom || record.showFrom || "";
+      return {
+        ...record,
+        id: `${record.id}-deadline-stage-${index}`,
+        type: "task",
+        title: stage.title ? `${record.title} · ${stage.title}` : record.title,
+        stageTitle: stage.title,
+        date: due,
+        due,
+        time: stage.time || record.time || anchor?.time || "",
+        sourceAnchorId: anchorId,
+        sourceAnchorTitle: anchor?.title || "",
+        sourceClassId: anchor?.type === "class" ? anchor.id : "",
+        sourceClassTitle: anchor?.type === "class" ? anchor.title : "",
+        originId: record.id,
+        deadlineGroupId: record.id,
+        showFrom,
+        isManualDeadline: true,
+      };
+    }).filter((stage) => stage.due || stage.sourceAnchorId);
+  }
+
+  manualDeadlineOccurrences(includeHidden = false) {
+    return this.deadlines.flatMap((record) => this.deadlineOccurrences(record))
+      .filter((record) => includeHidden || this.isVisible(record));
+  }
+
+  deadlinesForDate(date) {
+    const key = localDateKey(date);
+    const manual = this.manualDeadlineOccurrences().filter((record) => record.due === key);
+    return [...this.recurringDeadlinesForDate(date), ...manual];
   }
 
   upcomingDeadlinesForQuantum(id, limit = 6) {
@@ -256,12 +334,59 @@ class BrainIndex {
     for (let offset = 0; offset < 140 && result.length < limit; offset += 1) {
       const current = new Date(date);
       current.setDate(date.getDate() + offset);
-      for (const deadline of this.deadlinesForDate(current)) {
+      for (const deadline of this.recurringDeadlinesForDate(current)) {
         if (scope.has(deadline.quantum) || scope.has(deadline.parent) || (subject && deadline.subject === subject.id)) result.push(deadline);
         if (result.length >= limit) break;
       }
     }
     return result;
+  }
+
+  allUpcomingRecurringDeadlines(limit = 18) {
+    const result = [];
+    const date = new Date();
+    date.setHours(12, 0, 0, 0);
+    for (let offset = 0; offset < 210 && result.length < limit; offset += 1) {
+      const current = new Date(date);
+      current.setDate(date.getDate() + offset);
+      result.push(...this.recurringDeadlinesForDate(current));
+    }
+    return result.slice(0, limit);
+  }
+
+  deadlineAnchors() {
+    const anchors = [];
+    const today = new Date();
+    today.setHours(12, 0, 0, 0);
+    for (let offset = -14; offset <= 210; offset += 1) {
+      const date = new Date(today);
+      date.setDate(today.getDate() + offset);
+      const key = localDateKey(date);
+      for (const record of this.classesForDate(date)) {
+        anchors.push({
+          key: `${record.id}@@${key}`,
+          id: record.id,
+          date: key,
+          time: record.time,
+          title: record.title,
+          type: record.type,
+          label: `${formatDate(key)} · ${record.time || "—"} · ${record.title}`,
+        });
+      }
+    }
+    for (const record of this.events) {
+      if (!record.date) continue;
+      anchors.push({
+        key: `${record.id}@@${record.date}`,
+        id: record.id,
+        date: record.date,
+        time: record.time,
+        title: record.title,
+        type: record.type,
+        label: `${formatDate(record.date)} · ${record.time || "—"} · ${record.title}`,
+      });
+    }
+    return anchors.sort((a, b) => `${a.date}${a.time}`.localeCompare(`${b.date}${b.time}`));
   }
 }
 
@@ -300,6 +425,174 @@ class NewTaskModal extends Modal {
           return;
         }
         await this.plugin.createTask(this.data);
+        this.close();
+      }));
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
+class NewDeadlineModal extends Modal {
+  constructor(app, plugin, initialQuantum = "") {
+    super(app);
+    this.plugin = plugin;
+    this.data = {
+      title: "",
+      quantum: initialQuantum || plugin.index.nodes.find((node) => node.type === "subject")?.id || "second-brain",
+      showFrom: "",
+      stages: [{ title: "", due: localDateKey(new Date()), time: "", anchor: "", anchorKey: "" }],
+    };
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.addClass("sb-task-modal");
+    contentEl.addClass("sb-deadline-modal");
+    contentEl.createEl("h2", { text: "Новый дедлайн" });
+    contentEl.createEl("p", {
+      cls: "sb-modal-intro",
+      text: "Один файл может содержать несколько сроков. Каждый срок можно связать с конкретной парой или событием.",
+    });
+
+    new Setting(contentEl)
+      .setName("Название")
+      .addText((text) => text.setPlaceholder("Например: Курсовой проект").onChange((next) => { this.data.title = next; }));
+
+    const quantumOptions = this.plugin.index.nodes.filter((node) => ["subject", "quantum"].includes(node.type));
+    if (!quantumOptions.some((node) => node.id === this.data.quantum) && quantumOptions[0]) this.data.quantum = quantumOptions[0].id;
+    new Setting(contentEl)
+      .setName("Тема")
+      .setDesc("Предмет, проект или точный квант, к которому относится дедлайн")
+      .addDropdown((dropdown) => {
+        for (const node of quantumOptions) {
+          const subject = this.plugin.index.subjectFor(node);
+          const label = node.type === "subject" || !subject || subject.id === node.id ? node.title : `${subject.title} → ${node.title}`;
+          dropdown.addOption(node.id, label);
+        }
+        dropdown.setValue(this.data.quantum).onChange((next) => { this.data.quantum = next; });
+      });
+
+    new Setting(contentEl)
+      .setName("Показывать с")
+      .setDesc("Оставьте пустым, чтобы дедлайн отображался постоянно")
+      .addText((text) => {
+        text.inputEl.type = "date";
+        text.setValue(this.data.showFrom).onChange((next) => { this.data.showFrom = dateKey(next); });
+      });
+
+    contentEl.createEl("h3", { cls: "sb-modal-subtitle", text: "Сроки и этапы" });
+    const stageHost = contentEl.createDiv({ cls: "sb-deadline-stage-list" });
+    const anchors = this.plugin.index.deadlineAnchors();
+    const anchorMap = new Map(anchors.map((anchor) => [anchor.key, anchor]));
+
+    const renderStages = () => {
+      stageHost.empty();
+      this.data.stages.forEach((stage, index) => {
+        const card = stageHost.createDiv({ cls: "sb-deadline-stage-editor" });
+        const head = card.createDiv({ cls: "sb-deadline-stage-head" });
+        head.createEl("strong", { text: `Этап ${index + 1}` });
+        const remove = head.createEl("button", { cls: "sb-icon-button", attr: { "aria-label": "Удалить этап" } });
+        setIcon(remove, "trash-2");
+        remove.disabled = this.data.stages.length === 1;
+        remove.addEventListener("click", () => {
+          if (this.data.stages.length === 1) return;
+          this.data.stages.splice(index, 1);
+          renderStages();
+        });
+
+        const label = card.createEl("input", {
+          cls: "sb-modal-input",
+          attr: { type: "text", placeholder: "Название этапа — необязательно" },
+        });
+        label.value = stage.title;
+        label.addEventListener("input", () => { stage.title = label.value; });
+
+        const fields = card.createDiv({ cls: "sb-deadline-stage-fields" });
+        const dateInput = fields.createEl("input", { cls: "sb-modal-input", attr: { type: "date", "aria-label": "Дата этапа" } });
+        dateInput.value = stage.due;
+        dateInput.addEventListener("input", () => { stage.due = dateKey(dateInput.value); });
+
+        const anchorSelect = fields.createEl("select", { cls: "dropdown sb-deadline-anchor-select", attr: { "aria-label": "Привязка к паре или событию" } });
+        anchorSelect.createEl("option", { value: "", text: "Только дата — без события" });
+        for (const anchor of anchors) anchorSelect.createEl("option", { value: anchor.key, text: anchor.label });
+        anchorSelect.value = stage.anchorKey || "";
+        anchorSelect.addEventListener("change", () => {
+          const anchor = anchorMap.get(anchorSelect.value);
+          stage.anchorKey = anchor?.key || "";
+          stage.anchor = anchor?.id || "";
+          if (anchor) {
+            stage.due = anchor.date;
+            stage.time = anchor.time || "";
+          }
+          renderStages();
+        });
+      });
+    };
+    renderStages();
+
+    const addStage = contentEl.createEl("button", { cls: "sb-small-button sb-add-stage", text: "Добавить ещё срок" });
+    setIcon(addStage.createSpan(), "plus");
+    addStage.addEventListener("click", () => {
+      const previous = this.data.stages[this.data.stages.length - 1];
+      this.data.stages.push({ title: "", due: previous?.due || localDateKey(new Date()), time: "", anchor: "", anchorKey: "" });
+      renderStages();
+    });
+
+    new Setting(contentEl)
+      .addButton((button) => button.setButtonText("Создать дедлайн").setCta().onClick(async () => {
+        if (!this.data.title.trim()) {
+          new Notice("Введите название дедлайна");
+          return;
+        }
+        if (!this.data.stages.length || this.data.stages.some((stage) => !dateKey(stage.due))) {
+          new Notice("Укажите дату для каждого этапа");
+          return;
+        }
+        await this.plugin.createDeadline(this.data);
+        this.close();
+      }));
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
+class DeadlineVisibilityModal extends Modal {
+  constructor(app, plugin, record) {
+    super(app);
+    this.plugin = plugin;
+    this.record = record;
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    this.showFrom = record.showFrom && record.showFrom > localDateKey(new Date()) ? record.showFrom : localDateKey(tomorrow);
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.addClass("sb-task-modal");
+    contentEl.createEl("h2", { text: "Видимость дедлайна" });
+    contentEl.createEl("p", { cls: "sb-modal-intro", text: this.record.title });
+    new Setting(contentEl)
+      .setName("Скрыть до даты")
+      .setDesc("В указанную дату карточка снова появится автоматически")
+      .addText((text) => {
+        text.inputEl.type = "date";
+        text.setValue(this.showFrom).onChange((next) => { this.showFrom = dateKey(next); });
+      });
+    new Setting(contentEl)
+      .addButton((button) => button.setButtonText("Показывать всегда").onClick(async () => {
+        await this.plugin.setDeadlineShowFrom(this.record, "");
+        this.close();
+      }))
+      .addButton((button) => button.setButtonText("Скрыть").setCta().onClick(async () => {
+        if (!this.showFrom) {
+          new Notice("Выберите дату возврата");
+          return;
+        }
+        await this.plugin.setDeadlineShowFrom(this.record, this.showFrom);
         this.close();
       }));
   }
@@ -449,9 +742,12 @@ class SecondBrainView extends ItemView {
     const managementButton = navigation.createEl("button", { cls: `sb-nav-button ${this.activePage === "management" ? "is-active" : ""}`, text: "Управление" });
     setIcon(managementButton.createSpan(), "list-checks");
     managementButton.addEventListener("click", () => { this.activePage = "management"; this.render(); });
-    const addButton = navigation.createEl("button", { cls: "sb-action-button mod-cta", text: "Добавить" });
+    const addButton = navigation.createEl("button", { cls: "sb-action-button", text: "Задача" });
     setIcon(addButton.createSpan(), "plus");
     addButton.addEventListener("click", () => new NewTaskModal(this.app, this.plugin, this.selectedQuantum).open());
+    const deadlineButton = navigation.createEl("button", { cls: "sb-action-button mod-cta", text: "Дедлайн" });
+    setIcon(deadlineButton.createSpan(), "flag");
+    deadlineButton.addEventListener("click", () => new NewDeadlineModal(this.app, this.plugin, this.selectedQuantum).open());
   }
 
   renderPage() {
@@ -638,7 +934,7 @@ class SecondBrainView extends ItemView {
         ...this.plugin.index.classesForDate(date),
         ...this.plugin.index.deadlinesForDate(date),
         ...this.plugin.index.events.filter((record) => record.date === key),
-        ...this.plugin.index.tasks.filter((record) => record.due === key),
+        ...this.plugin.index.tasks.filter((record) => record.due === key && this.plugin.index.isVisible(record)),
       ].sort((a, b) => `${a.time || "99:99"}${a.type === "task" ? "0" : "1"}${a.title}`.localeCompare(`${b.time || "99:99"}${b.type === "task" ? "0" : "1"}${b.title}`));
       const records = sourceRecords.map((record) => record.type === "class" ? Object.assign({}, record, { date: key }) : record);
       const visibleLimit = this.calendarExpanded ? 4 : 10;
@@ -649,7 +945,7 @@ class SecondBrainView extends ItemView {
           cls: `sb-calendar-item is-${record.type}${lessonKind}${subjectKind}`,
           attr: { "aria-label": `${record.time ? `${record.time} ` : ""}${record.title}` },
         });
-        const calendarLinkId = record.sourceClassId || (record.type === "class" && record.deadlineTitle ? record.id : "");
+        const calendarLinkId = record.sourceAnchorId || record.sourceClassId || (["class", "event"].includes(record.type) ? record.id : "");
         if (calendarLinkId) {
           item.dataset.calendarLinkId = calendarLinkId;
           item.addEventListener("mouseenter", () => this.highlightCalendarLink(calendarLinkId, true));
@@ -699,7 +995,7 @@ class SecondBrainView extends ItemView {
     const records = [
       ...this.plugin.index.deadlinesForDate(today),
       ...this.plugin.index.events.filter((record) => record.date === key),
-      ...this.plugin.index.tasks.filter((record) => record.due === key),
+      ...this.plugin.index.tasks.filter((record) => record.due === key && this.plugin.index.isVisible(record)),
     ].sort((a, b) => `${a.time || "99:99"}${a.title}`.localeCompare(`${b.time || "99:99"}${b.title}`, "ru"));
 
     const top = this.todayBodyEl.createDiv({ cls: "sb-today-top" });
@@ -727,17 +1023,18 @@ class SecondBrainView extends ItemView {
         cls: "sb-today-meta",
         text: [
           record.time,
-          record.sourceClassTitle ? `к семинару: ${record.sourceClassTitle}` : subject?.title,
+          record.sourceAnchorTitle ? `к событию: ${record.sourceAnchorTitle}` : record.sourceClassTitle ? `к семинару: ${record.sourceClassTitle}` : subject?.title,
           record.type === "task" ? `${record.progress}%` : "Событие",
         ].filter(Boolean).join(" · "),
       });
       row.createSpan({ cls: "sb-today-open", text: "Открыть" });
-      if (record.sourceClassId) {
-        row.dataset.calendarLinkId = record.sourceClassId;
-        row.addEventListener("mouseenter", () => this.highlightCalendarLink(record.sourceClassId, true));
-        row.addEventListener("mouseleave", () => this.highlightCalendarLink(record.sourceClassId, false));
-        row.addEventListener("focus", () => this.highlightCalendarLink(record.sourceClassId, true));
-        row.addEventListener("blur", () => this.highlightCalendarLink(record.sourceClassId, false));
+      const calendarLinkId = record.sourceAnchorId || record.sourceClassId;
+      if (calendarLinkId) {
+        row.dataset.calendarLinkId = calendarLinkId;
+        row.addEventListener("mouseenter", () => this.highlightCalendarLink(calendarLinkId, true));
+        row.addEventListener("mouseleave", () => this.highlightCalendarLink(calendarLinkId, false));
+        row.addEventListener("focus", () => this.highlightCalendarLink(calendarLinkId, true));
+        row.addEventListener("blur", () => this.highlightCalendarLink(calendarLinkId, false));
       }
       this.decorateInteractive(row, record);
       row.addEventListener("click", () => {
@@ -787,13 +1084,15 @@ class SecondBrainView extends ItemView {
   renderDeadlines() {
     if (!this.deadlineBodyEl) return;
     this.deadlineBodyEl.empty();
-    const trackedTasks = this.plugin.index.tasksForQuantum(this.selectedQuantum);
-    const recurringDeadlines = this.plugin.index.upcomingDeadlinesForQuantum(this.selectedQuantum);
-    const tasks = [...trackedTasks, ...recurringDeadlines].sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"));
+    const trackedTasks = this.plugin.index.tasksForQuantum(this.selectedQuantum).filter((record) => this.plugin.index.isVisible(record));
+    const manualDeadlines = this.plugin.index.manualDeadlineOccurrences();
+    const recurringDeadlines = this.plugin.index.allUpcomingRecurringDeadlines();
+    const tasks = [...trackedTasks, ...manualDeadlines, ...recurringDeadlines].sort((a, b) => (a.due || "9999").localeCompare(b.due || "9999"));
     const recurringProjects = [...new Set(recurringDeadlines.map((task) => task.quantum))]
       .map((id) => this.plugin.index.byId.get(id))
       .filter(Boolean);
-    const progressSources = [...trackedTasks, ...recurringProjects];
+    const manualDeadlineSources = this.plugin.index.deadlines.filter((record) => this.plugin.index.isVisible(record));
+    const progressSources = [...trackedTasks, ...manualDeadlineSources, ...recurringProjects];
     const progress = progressSources.length ? Math.round(progressSources.reduce((sum, item) => sum + item.progress, 0) / progressSources.length) : 0;
     const summary = this.deadlineBodyEl.createDiv({ cls: "sb-progress-summary" });
     const ring = summary.createDiv({ cls: "sb-progress-ring" });
@@ -801,13 +1100,17 @@ class SecondBrainView extends ItemView {
     ring.createSpan({ text: `${progress}%` });
     const summaryCopy = summary.createDiv();
     summaryCopy.createDiv({ cls: "sb-progress-title", text: "Процесс выполнения" });
-    summaryCopy.createDiv({ cls: "sb-progress-meta", text: `${trackedTasks.length} заданий · ${recurringProjects.length} серий дедлайнов` });
+    const deadlineSeries = new Set([...manualDeadlineSources.map((record) => record.id), ...recurringProjects.map((record) => record.id)]);
+    summaryCopy.createDiv({ cls: "sb-progress-meta", text: `${trackedTasks.length} заданий · ${deadlineSeries.size} серий дедлайнов` });
+    const addDeadline = summary.createEl("button", { cls: "sb-icon-button sb-add-deadline", attr: { "aria-label": "Добавить дедлайн", title: "Добавить дедлайн" } });
+    setIcon(addDeadline, "plus");
+    addDeadline.addEventListener("click", () => new NewDeadlineModal(this.app, this.plugin, this.selectedQuantum).open());
     const list = this.deadlineBodyEl.createDiv({ cls: "sb-deadline-list" });
-    if (!tasks.length) list.createDiv({ cls: "sb-empty", text: "В этой ветке пока нет заданий" });
+    if (!tasks.length) list.createDiv({ cls: "sb-empty", text: "Пока нет видимых заданий и дедлайнов" });
     const groups = new Map();
     for (const task of tasks) {
       const topicId = task.quantum || task.parent || task.subject;
-      const key = topicId ? `topic:${topicId}` : `task:${task.id}`;
+      const key = task.deadlineGroupId ? `deadline:${task.deadlineGroupId}` : topicId ? `topic:${topicId}` : `task:${task.id}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(task);
     }
@@ -818,13 +1121,22 @@ class SecondBrainView extends ItemView {
       const nearest = groupTasks.find((task) => !task.due || task.due >= today) || groupTasks[groupTasks.length - 1];
       const subsequent = groupTasks.filter((task) => task.id !== nearest.id);
       const topic = this.plugin.index.byId.get(nearest.quantum || nearest.parent);
-      const project = (topic?.weeklyGoal || nearest.sourceClassId) ? topic : null;
+      const origin = this.plugin.index.byId.get(nearest.originId);
+      const project = topic?.weeklyGoal ? topic : null;
       const row = list.createDiv({ cls: `sb-deadline sb-deadline-group ${groupTasks.some((task) => task.id === this.selectedTaskId) ? "is-selected" : ""}` });
       const head = row.createDiv({ cls: "sb-deadline-group-head" });
       head.createSpan({ cls: `sb-status-dot ${nearest.progress >= 100 ? "is-done" : nearest.due && nearest.due < today ? "is-late" : ""}` });
       const copy = head.createDiv({ cls: "sb-deadline-copy" });
-      copy.createDiv({ cls: "sb-deadline-title", text: project?.title || nearest.title });
-      copy.createDiv({ cls: "sb-deadline-meta", text: `${nearest.status} · ${nearest.progress}%${subsequent.length ? ` · ещё ${subsequent.length}` : ""}` });
+      copy.createDiv({ cls: "sb-deadline-title", text: project?.title || origin?.title || nearest.title });
+      copy.createDiv({
+        cls: "sb-deadline-meta",
+        text: [
+          `${nearest.status} · ${nearest.progress}%${subsequent.length ? ` · ещё ${subsequent.length}` : ""}`,
+          nearest.stageTitle ? `этап: ${nearest.stageTitle}` : "",
+          nearest.sourceAnchorTitle ? `к событию: ${nearest.sourceAnchorTitle}` : "",
+          topic?.title ? `тема: ${topic.title}` : "",
+        ].filter(Boolean).join(" · "),
+      });
       head.createDiv({ cls: "sb-deadline-date", text: formatDate(nearest.due) });
 
       if (project) {
@@ -851,12 +1163,20 @@ class SecondBrainView extends ItemView {
       if (subsequent.length) {
         const future = row.createEl("details", { cls: "sb-future-deadlines" });
         future.addEventListener("click", (event) => event.stopPropagation());
-        future.createEl("summary", { text: `Следующие даты (${subsequent.length})` });
+        future.createEl("summary", { text: `Все остальные даты (${subsequent.length})` });
         const dates = future.createDiv({ cls: "sb-future-date-list" });
-        for (const task of subsequent) dates.createDiv({ text: `${formatDate(task.due)} · ${task.title}` });
+        for (const task of subsequent) dates.createDiv({ text: `${formatDate(task.due)} · ${task.stageTitle || task.title}${task.sourceAnchorTitle ? ` · ${task.sourceAnchorTitle}` : ""}` });
       }
 
       const actions = row.createDiv({ cls: "sb-deadline-group-actions" });
+      if (nearest.isManualDeadline || nearest.originId || nearest.sourceClassId) {
+        const visibility = actions.createEl("button", { cls: "sb-small-button", text: "Скрыть до…" });
+        setIcon(visibility.createSpan(), "eye-off");
+        visibility.addEventListener("click", (event) => {
+          event.stopPropagation();
+          new DeadlineVisibilityModal(this.app, this.plugin, origin || nearest).open();
+        });
+      }
       const open = actions.createEl("button", { cls: "sb-small-button", text: "Открыть" });
       setIcon(open.createSpan(), "file-text");
       open.addEventListener("click", (event) => { event.stopPropagation(); this.openRecord(nearest); });
@@ -1496,13 +1816,14 @@ class SecondBrainView extends ItemView {
 
 module.exports = class SecondBrainCorePlugin extends Plugin {
   async onload() {
-    this.settings = Object.assign({ taskFolder: "10 University/Задания", contentRoots: ["10 University"], semesterStart: "2026-08-31", defaultView: "calendar", openOnStartup: true }, await this.loadData());
+    this.settings = Object.assign({ taskFolder: "10 University/Задания", deadlineFolder: "10 University/Дедлайны", contentRoots: ["10 University"], semesterStart: "2026-08-31", defaultView: "calendar", openOnStartup: true }, await this.loadData());
     this.index = new BrainIndex(this.app, this.settings);
     await this.index.rebuild();
     this.registerView(VIEW_TYPE, (leaf) => new SecondBrainView(leaf, this));
     this.addRibbonIcon("calendar-range", "Открыть Second Brain", () => this.activateView());
     this.addCommand({ id: "open-second-brain", name: "Открыть Second Brain", callback: () => this.activateView() });
     this.addCommand({ id: "create-task", name: "Создать задание", callback: () => new NewTaskModal(this.app, this).open() });
+    this.addCommand({ id: "create-deadline", name: "Создать дедлайн", callback: () => new NewDeadlineModal(this.app, this).open() });
     this.addCommand({ id: "rebuild-index", name: "Перестроить индекс", callback: async () => { await this.refreshViews(); new Notice("Индекс Second Brain обновлён"); } });
     this.app.workspace.onLayoutReady(() => {
       if (this.settings.openOnStartup && !this.app.workspace.getLeavesOfType(VIEW_TYPE).length) this.activateView();
@@ -1573,5 +1894,58 @@ module.exports = class SecondBrainCorePlugin extends Plugin {
     new Notice(`Создано задание: ${data.title}`);
     await this.refreshViews();
     await this.app.workspace.getLeaf(true).openFile(file);
+  }
+
+  async createDeadline(data) {
+    await this.ensureFolder(this.settings.deadlineFolder);
+    const selected = this.index.byId.get(data.quantum);
+    const subject = this.index.subjectFor(selected);
+    const base = slugify(data.title);
+    let path = `${this.settings.deadlineFolder}/${base}.md`;
+    let suffix = 2;
+    while (this.app.vault.getAbstractFileByPath(path)) {
+      path = `${this.settings.deadlineFolder}/${base}-${suffix}.md`;
+      suffix += 1;
+    }
+    const id = `deadline-${Date.now().toString(36)}`;
+    const stages = data.stages.map((stage) => {
+      const anchor = this.index.byId.get(stage.anchor);
+      return {
+        title: stage.title.trim(),
+        due: dateKey(stage.due) || anchor?.date || localDateKey(new Date()),
+        time: stage.time || anchor?.time || "",
+        anchor: anchor?.id || "",
+        anchorRecord: anchor,
+      };
+    });
+    const stageYaml = stages.flatMap((stage) => [
+      `  - date: ${stage.due}`,
+      ...(stage.title ? [`    title: ${yamlQuote(stage.title)}`] : []),
+      ...(stage.time ? [`    time: ${yamlQuote(stage.time)}`] : []),
+      ...(stage.anchor ? [`    anchor: ${yamlQuote(stage.anchor)}`] : []),
+    ]).join("\n");
+    const stageMarkdown = stages.map((stage) => {
+      const anchorLink = stage.anchorRecord ? ` → [[${stage.anchorRecord.path}|${stage.anchorRecord.title}]]` : "";
+      return `- [ ] ${stage.due}${stage.time ? ` ${stage.time}` : ""}${stage.title ? ` — ${stage.title}` : ""}${anchorLink}`;
+    }).join("\n");
+    const markdown = `---\nsb-type: deadline\nsb-id: ${yamlQuote(id)}\nsb-parent: ${yamlQuote(data.quantum)}\nsb-quant: ${yamlQuote(data.quantum)}\nsb-subject: ${yamlQuote(subject?.id || "")}\ntitle: ${yamlQuote(data.title.trim())}\nstatus: todo\nprogress: 0\ngraph: false\n${data.showFrom ? `show-from: ${dateKey(data.showFrom)}\n` : ""}deadlines:\n${stageYaml}\nsummary: ${yamlQuote("Многоэтапный дедлайн. Ближайшая дата выбирается автоматически, остальные сохраняются в карточке.")}\ntags:\n  - deadline\n---\n\n# ${data.title.trim()}\n\n## Тема\n\n[[${selected?.path || "00 System/Second Brain"}|${selected?.title || data.quantum}]]\n\n## Сроки\n\n${stageMarkdown}\n\n## Результат\n\n- [ ] Определить критерий готовности\n\n## Процесс\n\n- [ ] Подготовить\n- [ ] Проверить\n- [ ] Сдать\n`;
+    const file = await this.app.vault.create(path, markdown);
+    new Notice(`Создан дедлайн: ${data.title}`);
+    await this.refreshViews();
+    await this.app.workspace.getLeaf(true).openFile(file);
+  }
+
+  async setDeadlineShowFrom(record, showFrom) {
+    const file = this.app.vault.getAbstractFileByPath(record.path);
+    if (!(file instanceof TFile)) {
+      new Notice("Не удалось найти файл дедлайна");
+      return;
+    }
+    await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+      if (showFrom) frontmatter["show-from"] = dateKey(showFrom);
+      else delete frontmatter["show-from"];
+    });
+    new Notice(showFrom ? `Дедлайн скрыт до ${formatDate(showFrom)}` : "Дедлайн снова отображается постоянно");
+    await this.refreshViews();
   }
 };
