@@ -29,4 +29,4 @@
 
 ## Версия
 
-`Second Brain Core 1.1.2`
+`Second Brain Core 1.1.3`

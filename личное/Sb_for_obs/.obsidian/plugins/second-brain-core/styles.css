@@ -1328,6 +1328,11 @@
 
 .sb-add-stage {
   margin-top: 10px;
+  margin-bottom: 16px;
+}
+
+.sb-deadline-modal > .setting-item:last-of-type {
+  padding-top: 14px;
 }
 
 .sb-create-menu-modal {
