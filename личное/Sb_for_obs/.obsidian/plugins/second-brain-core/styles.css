@@ -1254,8 +1254,38 @@
   font-size: 15px;
 }
 
+.sb-deadline-modal-shell {
+  width: min(820px, calc(100vw - 32px));
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 32px);
+}
+
+.sb-deadline-modal-shell .modal-content {
+  min-width: 0;
+  overflow-x: hidden;
+}
+
 .sb-deadline-modal {
-  width: min(760px, 90vw);
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
+}
+
+.sb-deadline-modal .setting-item,
+.sb-deadline-modal .setting-item-info,
+.sb-deadline-modal .setting-item-control {
+  min-width: 0;
+}
+
+.sb-deadline-modal .setting-item-control {
+  flex: 1 1 300px;
+}
+
+.sb-deadline-modal .setting-item-control input,
+.sb-deadline-modal .setting-item-control select {
+  width: 100%;
+  max-width: 100%;
 }
 
 .sb-deadline-stage-list {
@@ -1292,7 +1322,7 @@
 
 .sb-deadline-stage-fields {
   display: grid;
-  grid-template-columns: minmax(145px, .35fr) minmax(260px, 1fr);
+  grid-template-columns: minmax(135px, .32fr) minmax(0, 1fr);
   gap: 8px;
 }
 
@@ -1408,7 +1438,78 @@
   text-align: center;
 }
 
+.sb-complete-button {
+  border-color: color-mix(in srgb, var(--color-green) 56%, var(--background-modifier-border));
+  background: color-mix(in srgb, var(--color-green) 14%, var(--interactive-normal));
+  color: var(--color-green);
+}
+
+.sb-resume-button {
+  border-color: color-mix(in srgb, var(--interactive-accent) 52%, var(--background-modifier-border));
+  color: var(--text-accent);
+}
+
+.sb-delete-button {
+  border-color: color-mix(in srgb, var(--color-red) 52%, var(--background-modifier-border));
+  background: color-mix(in srgb, var(--color-red) 10%, var(--interactive-normal));
+  color: var(--color-red);
+}
+
+.sb-delete-modal {
+  max-width: 460px;
+  text-align: center;
+}
+
+.sb-delete-modal-icon {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 12px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--color-red) 14%, transparent);
+  color: var(--color-red);
+}
+
+.sb-delete-modal-icon svg {
+  width: 23px;
+  height: 23px;
+}
+
+.sb-delete-modal h2 {
+  margin: 0;
+}
+
+.sb-delete-modal p {
+  margin: 9px 0 18px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.sb-delete-modal-actions {
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+}
+
 @media (max-width: 700px) {
+  .sb-deadline-modal-shell {
+    width: calc(100vw - 16px);
+    max-width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+  }
+
+  .sb-deadline-modal .setting-item {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sb-deadline-modal .setting-item-control {
+    flex-basis: auto;
+    width: 100%;
+  }
+
   .sb-deadline-stage-fields {
     grid-template-columns: 1fr;
   }

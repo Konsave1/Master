@@ -38,6 +38,11 @@ function yamlQuote(input) {
   return JSON.stringify(String(input ?? ""));
 }
 
+function isCompleted(record) {
+  const status = asString(record?.status).toLocaleLowerCase("ru");
+  return record?.progress >= 100 || ["done", "completed", "complete", "выполнено", "готово"].includes(status);
+}
+
 function dateKey(input) {
   const text = asString(input);
   const match = text.match(/^\d{4}-\d{2}-\d{2}/);
@@ -448,6 +453,7 @@ class NewDeadlineModal extends Modal {
 
   onOpen() {
     const { contentEl } = this;
+    this.modalEl.addClass("sb-deadline-modal-shell");
     contentEl.addClass("sb-task-modal");
     contentEl.addClass("sb-deadline-modal");
     contentEl.createEl("h2", { text: "Новый дедлайн" });
@@ -650,6 +656,37 @@ class AddItemModal extends Modal {
     );
 
     contentEl.createDiv({ cls: "sb-create-menu-hint", text: "Esc — закрыть без добавления" });
+  }
+
+  onClose() {
+    this.contentEl.empty();
+  }
+}
+
+class DeleteRecordModal extends Modal {
+  constructor(app, plugin, record) {
+    super(app);
+    this.plugin = plugin;
+    this.record = record;
+  }
+
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.addClass("sb-delete-modal");
+    const icon = contentEl.createDiv({ cls: "sb-delete-modal-icon" });
+    setIcon(icon, "trash-2");
+    contentEl.createEl("h2", { text: "Удалить выполненное?" });
+    contentEl.createEl("p", {
+      text: `«${this.record.title}» будет перемещено в системную корзину. При необходимости файл можно восстановить.`,
+    });
+    const actions = contentEl.createDiv({ cls: "sb-delete-modal-actions" });
+    const cancel = actions.createEl("button", { text: "Оставить" });
+    cancel.addEventListener("click", () => this.close());
+    const remove = actions.createEl("button", { cls: "mod-warning", text: "Удалить" });
+    remove.addEventListener("click", async () => {
+      await this.plugin.deleteRecord(this.record);
+      this.close();
+    });
   }
 
   onClose() {
@@ -1223,6 +1260,28 @@ class SecondBrainView extends ItemView {
       }
 
       const actions = row.createDiv({ cls: "sb-deadline-group-actions" });
+      const actionable = origin || nearest;
+      if (isCompleted(actionable)) {
+        const resume = actions.createEl("button", { cls: "sb-small-button sb-resume-button", text: "Возобновить" });
+        setIcon(resume.createSpan(), "rotate-ccw");
+        resume.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          await this.plugin.setRecordCompletion(actionable, false);
+        });
+        const remove = actions.createEl("button", { cls: "sb-small-button sb-delete-button", text: "Удалить" });
+        setIcon(remove.createSpan(), "trash-2");
+        remove.addEventListener("click", (event) => {
+          event.stopPropagation();
+          new DeleteRecordModal(this.app, this.plugin, actionable).open();
+        });
+      } else {
+        const complete = actions.createEl("button", { cls: "sb-small-button sb-complete-button", text: "Выполнено" });
+        setIcon(complete.createSpan(), "check");
+        complete.addEventListener("click", async (event) => {
+          event.stopPropagation();
+          await this.plugin.setRecordCompletion(actionable, true);
+        });
+      }
       if (nearest.isManualDeadline || nearest.originId || nearest.sourceClassId) {
         const visibility = actions.createEl("button", { cls: "sb-small-button", text: "Скрыть до…" });
         setIcon(visibility.createSpan(), "eye-off");
@@ -1987,6 +2046,50 @@ module.exports = class SecondBrainCorePlugin extends Plugin {
     new Notice(`Создан дедлайн: ${data.title}`);
     await this.refreshViews();
     await this.app.workspace.getLeaf(true).openFile(file);
+  }
+
+  async setRecordCompletion(record, completed) {
+    const file = this.app.vault.getAbstractFileByPath(record.path);
+    if (!(file instanceof TFile)) {
+      new Notice("Не удалось найти файл");
+      return;
+    }
+    await this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+      if (completed) {
+        const currentProgress = Math.max(0, Math.min(100, safeNumber(frontmatter.progress, record.progress || 0)));
+        if (currentProgress < 100) frontmatter["progress-before-done"] = currentProgress;
+        const currentStatus = asString(frontmatter.status || record.status || "todo");
+        if (!["done", "completed", "complete", "выполнено", "готово"].includes(currentStatus.toLocaleLowerCase("ru"))) {
+          frontmatter["status-before-done"] = currentStatus;
+        }
+        frontmatter.status = "done";
+        frontmatter.progress = 100;
+        frontmatter["completed-at"] = localDateKey(new Date());
+      } else {
+        frontmatter.status = asString(frontmatter["status-before-done"] || "todo");
+        frontmatter.progress = Math.max(0, Math.min(99, safeNumber(frontmatter["progress-before-done"], 0)));
+        delete frontmatter["status-before-done"];
+        delete frontmatter["progress-before-done"];
+        delete frontmatter["completed-at"];
+      }
+    });
+    new Notice(completed ? "Отмечено как выполненное" : "Работа возобновлена");
+    await this.refreshViews();
+  }
+
+  async deleteRecord(record) {
+    const file = this.app.vault.getAbstractFileByPath(record.path);
+    if (!(file instanceof TFile)) {
+      new Notice("Файл уже удалён или перемещён");
+      return;
+    }
+    try {
+      await this.app.vault.trash(file, true);
+    } catch (error) {
+      await this.app.vault.trash(file, false);
+    }
+    new Notice(`Перемещено в корзину: ${record.title}`);
+    await this.refreshViews();
   }
 
   async setDeadlineShowFrom(record, showFrom) {
